@@ -55,6 +55,46 @@ function ExamplePrompts({ onPick }: { onPick: (p: string) => void }) {
   );
 }
 
+function buildStepperLabels(event: GentryEvent): string[] {
+  const stages = event.stages || [];
+  const cacheStage = stages.find((s) => s.stage === "cache_check");
+  const routingStage = stages.find((s) => s.stage === "routing_decision");
+  const isCacheHit = event.cache_result?.startsWith("hit");
+
+  const steps = ["Request received", "Analyzing request…"];
+
+  if (isCacheHit) {
+    steps.push("Cache hit — serving instantly");
+  } else {
+    const sim = cacheStage?.closest_match_similarity;
+    steps.push(`Cache miss${typeof sim === "number" ? ` (${(sim * 100).toFixed(0)}% similarity)` : ""}`);
+  }
+
+  if (routingStage) {
+    const label = event.selected_model ? event.selected_model.toUpperCase() : (event.final_route || "").toUpperCase();
+    steps.push(`Routing → ${label}`);
+  }
+
+  steps.push("Completed ✓");
+  return steps;
+}
+
+function ThinkingStepper({ event, step }: { event: GentryEvent; step: number }) {
+  const labels = buildStepperLabels(event);
+  const color = routeColor(event);
+  return (
+    <div className="px-4 py-3 flex items-center gap-3">
+      <span className="w-2 h-2 rounded-full live-dot" style={{ backgroundColor: color }} />
+      <span className="font-mono-data text-sm text-off-white">
+        {labels[Math.min(step, labels.length - 1)]}
+      </span>
+      <span className="font-mono-data text-xs text-muted-dim ml-auto">
+        {Math.min(step + 1, labels.length)}/{labels.length}
+      </span>
+    </div>
+  );
+}
+
 function StatCard({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (
     <div className="border border-panel-border bg-panel rounded-lg px-5 py-4 flex-1 min-w-[140px]">
@@ -74,17 +114,29 @@ function BoardRow({
   isNew,
   expanded,
   onToggle,
+  revealing,
+  revealStep,
 }: {
   event: GentryEvent;
   isNew: boolean;
   expanded: boolean;
   onToggle: () => void;
+  revealing?: boolean;
+  revealStep?: number;
 }) {
   const stages = event.stages || [];
   const classifiedStage = stages.find((s) => s.stage === "classified");
   const routingStage = stages.find((s) => s.stage === "routing_decision");
   const cacheStage = stages.find((s) => s.stage === "cache_check");
   const color = routeColor(event);
+
+  if (revealing) {
+    return (
+      <div className="border-b border-panel-border last:border-b-0 board-row-enter">
+        <ThinkingStepper event={event} step={revealStep || 0} />
+      </div>
+    );
+  }
 
   return (
     <div
@@ -127,17 +179,41 @@ function BoardRow({
           )}
           <div className="grid md:grid-cols-2 gap-4">
             <div>
-              <div className="text-[11px] uppercase tracking-widest text-muted mb-2">Reasoning</div>
-              <p className="text-sm text-off-white/90 font-mono-data leading-relaxed">
-                {routingStage?.reason || "Served from cache — no routing decision needed."}
+              <div className="text-[11px] uppercase tracking-widest text-muted mb-2">Decision Factors</div>
+              <ul className="space-y-1.5 mb-2">
+                {classifiedStage?.signals && (
+                  <li className="text-sm text-off-white/90 font-mono-data flex gap-2">
+                    <span className="text-sage">✓</span>
+                    <span>Context: {classifiedStage.signals.token_count} tokens</span>
+                  </li>
+                )}
+                <li className="text-sm text-off-white/90 font-mono-data flex gap-2">
+                  <span className="text-sage">✓</span>
+                  <span>
+                    Cache: {cacheStage?.result === "hit" ? "hit" : "miss"}
+                    {typeof cacheStage?.closest_match_similarity === "number" &&
+                      ` (${(cacheStage.closest_match_similarity * 100).toFixed(0)}% similarity)`}
+                  </span>
+                </li>
+                {routingStage?.reason && (
+                  <li className="text-sm text-off-white/90 font-mono-data flex gap-2">
+                    <span className="text-sage">✓</span>
+                    <span>{routingStage.reason}</span>
+                  </li>
+                )}
+                {!routingStage && (
+                  <li className="text-sm text-off-white/90 font-mono-data flex gap-2">
+                    <span className="text-sage">✓</span>
+                    <span>Served from cache — no routing decision needed</span>
+                  </li>
+                )}
+              </ul>
+              <p className="text-sm font-mono-data mt-2">
+                <span className="text-muted">Route → </span>
+                <span className="font-medium uppercase" style={{ color: routeColor(event) }}>
+                  {routeLabel(event)}
+                </span>
               </p>
-              {cacheStage && (
-                <p className="text-xs text-muted mt-2 font-mono-data">
-                  Cache: {cacheStage.result === "hit" ? "hit" : "miss"}
-                  {typeof cacheStage.closest_match_similarity === "number" &&
-                    ` (closest match ${(cacheStage.closest_match_similarity * 100).toFixed(0)}%)`}
-                </p>
-              )}
               {classifiedStage?.signals && (
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   {Object.entries(classifiedStage.signals)
@@ -157,7 +233,7 @@ function BoardRow({
             {routingStage?.counterfactuals && routingStage.counterfactuals.length > 0 && (
               <div>
                 <div className="text-[11px] uppercase tracking-widest text-muted mb-2">
-                  What if a different model had been used?
+                  Alternative Routes
                 </div>
                 <table className="w-full text-xs font-mono-data">
                   <thead>
@@ -202,6 +278,8 @@ export default function Home() {
   const [submitting, setSubmitting] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [newIds, setNewIds] = useState<Set<string>>(new Set());
+  const [revealingId, setRevealingId] = useState<string | null>(null);
+  const [revealStep, setRevealStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const knownIds = useRef<Set<string>>(new Set());
 
@@ -236,6 +314,16 @@ export default function Home() {
       const result = await routePrompt(prompt.trim());
       setPrompt("");
       await poll();
+
+      const stepCount = buildStepperLabels(result.event).length;
+      setRevealingId(result.event.request_id);
+      setRevealStep(0);
+      for (let i = 1; i < stepCount; i++) {
+        await new Promise((r) => setTimeout(r, 480));
+        setRevealStep(i);
+      }
+      await new Promise((r) => setTimeout(r, 480));
+      setRevealingId(null);
       setExpandedId(result.event.request_id);
     } catch {
       setError("Request failed — the backend may be waking up. Try again in a moment.");
@@ -253,6 +341,13 @@ export default function Home() {
     return sum + (largeCf ? largeCf.estimated_cost : 0.03);
   }, 0);
   const savings = totalBaselineCost - totalActualCost;
+  const largeRoutedCount = events.filter((e) => e.selected_model === "large").length;
+  const nonLargePct = totalRequests > 0
+    ? Math.round(((totalRequests - largeRoutedCount) / totalRequests) * 100)
+    : 0;
+  const costMultiplier = totalActualCost > 0
+    ? (totalBaselineCost / totalActualCost)
+    : 0;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -263,7 +358,7 @@ export default function Home() {
               Gentry
             </h1>
             <p className="text-sm text-muted mt-1 font-mono-data">
-              live routing console — BTL Runtime Optimizer
+              explainable AI inference gateway — powered by BTL Runtime
             </p>
           </div>
           <div className="flex items-center gap-2 text-xs text-muted font-mono-data">
@@ -294,6 +389,15 @@ export default function Home() {
             <ExamplePrompts onPick={setPrompt} />
             {error && <p className="text-xs text-rose mt-3 font-mono-data">{error}</p>}
           </section>
+
+          {totalRequests > 0 && (
+            <section className="border border-amber-dim/40 bg-amber/5 rounded-lg px-5 py-4 text-center">
+              <p className="font-serif-display italic text-2xl md:text-3xl text-amber">
+                {nonLargePct}% of requests avoided the largest model
+                {costMultiplier > 1.05 && ` — ${costMultiplier.toFixed(1)}× cheaper than always using it`}
+              </p>
+            </section>
+          )}
 
           <section className="flex gap-3 flex-wrap">
             <StatCard label="Requests" value={String(totalRequests)} />
@@ -330,6 +434,8 @@ export default function Home() {
                     event={e}
                     isNew={newIds.has(e.request_id)}
                     expanded={expandedId === e.request_id}
+                    revealing={revealingId === e.request_id}
+                    revealStep={revealStep}
                     onToggle={() =>
                       setExpandedId(expandedId === e.request_id ? null : e.request_id)
                     }
