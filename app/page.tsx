@@ -117,6 +117,14 @@ function BoardRow({
 
       {expanded && (
         <div className="px-4 pb-4 pt-1 bg-charcoal/40">
+          {event.response && (
+            <div className="mb-4">
+              <div className="text-[11px] uppercase tracking-widest text-muted mb-2">Response</div>
+              <p className="text-sm text-off-white font-mono-data leading-relaxed whitespace-pre-wrap bg-panel/60 border border-panel-border rounded-md px-3 py-2.5">
+                {event.response}
+              </p>
+            </div>
+          )}
           <div className="grid md:grid-cols-2 gap-4">
             <div>
               <div className="text-[11px] uppercase tracking-widest text-muted mb-2">Reasoning</div>
@@ -225,9 +233,10 @@ export default function Home() {
     setSubmitting(true);
     setError(null);
     try {
-      await routePrompt(prompt.trim());
+      const result = await routePrompt(prompt.trim());
       setPrompt("");
       await poll();
+      setExpandedId(result.event.request_id);
     } catch {
       setError("Request failed — the backend may be waking up. Try again in a moment.");
     } finally {

@@ -50,6 +50,7 @@ export interface GentryEvent {
   stages?: Stage[];
   prompt_preview?: string;
   final_route?: string;
+  response?: string;
 }
 
 export interface RouteResponse {
