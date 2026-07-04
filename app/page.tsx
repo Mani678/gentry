@@ -184,7 +184,7 @@ function BoardRow({
                 {classifiedStage?.signals && (
                   <li className="text-sm text-off-white/90 font-mono-data flex gap-2">
                     <span className="text-sage">✓</span>
-                    <span>Context: {classifiedStage.signals.token_count} tokens</span>
+                    <span>Input: {classifiedStage.signals.token_count} tokens</span>
                   </li>
                 )}
                 <li className="text-sm text-off-white/90 font-mono-data flex gap-2">
@@ -214,6 +214,18 @@ function BoardRow({
                   {routeLabel(event)}
                 </span>
               </p>
+              {(() => {
+                const largeCf = routingStage?.counterfactuals?.find((cf) => cf.model === "large");
+                const selectedCf = routingStage?.counterfactuals?.find((cf) => cf.model === event.selected_model);
+                if (!largeCf || !selectedCf || event.selected_model === "large" || largeCf.estimated_cost <= 0) return null;
+                const pct = Math.round((1 - selectedCf.estimated_cost / largeCf.estimated_cost) * 100);
+                return (
+                  <p className="text-sm font-mono-data mt-2 text-amber">
+                    {event.selected_model?.toUpperCase()} selected because it provides sufficient quality
+                    while reducing estimated cost by {pct}%.
+                  </p>
+                );
+              })()}
               {classifiedStage?.signals && (
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   {Object.entries(classifiedStage.signals)
@@ -253,7 +265,12 @@ function BoardRow({
                           className={selected ? "text-off-white" : "text-muted"}
                         >
                           <td className="py-1.5 uppercase" style={{ color: selected ? ROUTE_COLOR[cf.model] : undefined }}>
-                            {cf.model} {selected && "←"}
+                            {cf.model}
+                            {selected && (
+                              <span className="ml-2 text-[9px] normal-case px-1.5 py-0.5 rounded-full bg-sage/15 text-sage border border-sage/40 font-medium">
+                                ✓ selected
+                              </span>
+                            )}
                           </td>
                           <td className="text-right py-1.5">${cf.estimated_cost.toFixed(3)}</td>
                           <td className="text-right py-1.5">{cf.estimated_latency_s.toFixed(1)}s</td>
@@ -341,13 +358,6 @@ export default function Home() {
     return sum + (largeCf ? largeCf.estimated_cost : 0.03);
   }, 0);
   const savings = totalBaselineCost - totalActualCost;
-  const largeRoutedCount = events.filter((e) => e.selected_model === "large").length;
-  const nonLargePct = totalRequests > 0
-    ? Math.round(((totalRequests - largeRoutedCount) / totalRequests) * 100)
-    : 0;
-  const costMultiplier = totalActualCost > 0
-    ? (totalBaselineCost / totalActualCost)
-    : 0;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -358,7 +368,7 @@ export default function Home() {
               Gentry
             </h1>
             <p className="text-sm text-muted mt-1 font-mono-data">
-              explainable AI inference gateway — powered by BTL Runtime
+              AI inference gateway — powered by BTL Runtime
             </p>
           </div>
           <div className="flex items-center gap-2 text-xs text-muted font-mono-data">
@@ -389,15 +399,6 @@ export default function Home() {
             <ExamplePrompts onPick={setPrompt} />
             {error && <p className="text-xs text-rose mt-3 font-mono-data">{error}</p>}
           </section>
-
-          {totalRequests > 0 && (
-            <section className="border border-amber-dim/40 bg-amber/5 rounded-lg px-5 py-4 text-center">
-              <p className="font-serif-display italic text-2xl md:text-3xl text-amber">
-                {nonLargePct}% of requests avoided the largest model
-                {costMultiplier > 1.05 && ` — ${costMultiplier.toFixed(1)}× cheaper than always using it`}
-              </p>
-            </section>
-          )}
 
           <section className="flex gap-3 flex-wrap">
             <StatCard label="Requests" value={String(totalRequests)} />
